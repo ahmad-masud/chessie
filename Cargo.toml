@@ -9,6 +9,12 @@ edition = "2021"
 bevy = { version = "0.19", features = ["jpeg"] }
 shakmaty = "0.30"
 
+# A shipped build: one binary, no debug symbols, whole-program optimisation.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
 [profile.dev]
 opt-level = 1
 
