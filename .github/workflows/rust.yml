@@ -16,12 +16,22 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # Bevy links against ALSA and udev on Linux, and neither is on the
-    # runner by default, so the build fails without these.
+    # Bevy needs a windowing stack and audio on Linux, none of which is on
+    # the runner by default. Both display backends are covered: the build
+    # pulls in wayland-sys and the X11 crates regardless of which one a
+    # machine would actually use.
     - name: Install Bevy's system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libasound2-dev libudev-dev
+        sudo apt-get install -y \
+          libasound2-dev \
+          libudev-dev \
+          libwayland-dev \
+          libxkbcommon-dev \
+          libx11-dev \
+          libxcursor-dev \
+          libxi-dev \
+          libxrandr-dev
 
     - name: Cache cargo
       uses: actions/cache@v4
