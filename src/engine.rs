@@ -148,14 +148,12 @@ impl Drop for Engine {
 }
 
 fn spawn_stockfish() -> Result<Child, String> {
-    let candidates = [
-        "stockfish",
-        "/opt/homebrew/bin/stockfish",
-        "/usr/local/bin/stockfish",
-        "/usr/bin/stockfish",
-    ];
+    // The engine shipped inside the app comes first, so a packaged copy never
+    // depends on what happens to be installed.
+    let exe = std::env::current_exe().unwrap_or_default();
+    let candidates = crate::paths::engine_candidates(&exe);
     let mut last = String::new();
-    for path in candidates {
+    for path in &candidates {
         match Command::new(path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -170,7 +168,8 @@ fn spawn_stockfish() -> Result<Child, String> {
         }
     }
     Err(format!(
-        "Stockfish not found (tried PATH and common locations). Last error: {last}"
+        "no chess engine found (tried {} locations). Last error: {last}",
+        candidates.len()
     ))
 }
 

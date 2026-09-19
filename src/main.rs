@@ -8,6 +8,7 @@ mod engine;
 mod eval;
 mod interaction;
 mod models;
+mod paths;
 mod pieces;
 mod strength;
 mod ui;
@@ -24,6 +25,16 @@ use crate::interaction::{LastMoveText, Selection};
 use crate::strength::{Rating, Rng};
 
 fn main() {
+    // Bevy resolves assets relative to BEVY_ASSET_ROOT, falling back to the
+    // cargo manifest and then the executable's directory. Point it at
+    // whichever of those actually holds the files, so the app works the same
+    // from a bundle, a folder, or `cargo run`.
+    if std::env::var_os("BEVY_ASSET_ROOT").is_none() {
+        if let Some(root) = std::env::current_exe().ok().and_then(|exe| paths::asset_root(&exe)) {
+            std::env::set_var("BEVY_ASSET_ROOT", root);
+        }
+    }
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
