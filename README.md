@@ -6,10 +6,33 @@ bare scene under an open sky, viewed from a camera you steer.
 Built in Rust with [Bevy](https://bevyengine.org) 0.19 for the 3D world and
 [shakmaty](https://docs.rs/shakmaty) for the rules.
 
+## A packaged app
+
+```sh
+./scripts/bundle-macos.sh
+open dist/Chessie.app
+```
+
+That produces a single `Chessie.app` (about 160 MB) with the engine and the
+piece model inside it. Nothing needs installing, and it does not care where it
+is moved to — it looks for its files in `Contents/Resources` first, then beside
+the executable, then in the project directory, so the same binary works from a
+bundle, a folder, or `cargo run`.
+
+Two caveats for handing it to anyone else:
+
+- The script signs the app **ad-hoc**, which is enough to run locally but not
+  to pass Gatekeeper on another machine. Someone else opening it will need to
+  right-click and choose Open the first time. Distributing it properly needs
+  an Apple Developer ID and notarisation.
+- It bundles Stockfish, which is GPL-3. That carries obligations — see
+  `CREDITS.md` before publishing it anywhere.
+
 ## Requirements
 
 - Rust (stable)
-- Stockfish on your `PATH` (`brew install stockfish`)
+- Stockfish, for running from source: `brew install stockfish`. The packaged
+  app carries its own copy and needs nothing installed.
 
 ## Run
 
