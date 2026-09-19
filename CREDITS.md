@@ -1,5 +1,11 @@
 # Credits
 
+Chessie's own code is MIT licensed, as in `LICENSE`. That covers the code in
+`src/` and the packaging scripts. The two things it carries with it — the
+piece model and, in a packaged build, the Stockfish binary — have their own
+terms, set out below. The MIT licence on this repository does not extend to
+them.
+
 ## Chess pieces
 
 The 3D chess pieces are from **[Chess Set](https://polyhaven.com/a/chess_set)**
