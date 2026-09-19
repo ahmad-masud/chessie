@@ -1,0 +1,16 @@
+[package]
+name = "chessie"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# jpeg: the chess set model ships JPEG textures, which Bevy does not decode
+# by default.
+bevy = { version = "0.19", features = ["jpeg"] }
+shakmaty = "0.30"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
