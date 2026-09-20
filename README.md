@@ -215,7 +215,14 @@ hidden so it is clear you are looking at history. Stepping onto the newest move,
 or pressing `↓`, returns you to live play. Single steps animate, so you can see
 what actually moved.
 
-This is review only — it does not take a move back.
+Playing a move while looking at an earlier position **starts a new line from
+there**: the moves that came after are discarded and the game continues down
+the branch you just made, the way taking a move back over a real board does.
+Stepping back and forward changes nothing until you actually move.
+
+While you are reading back, the engine is paused, so the game cannot move on
+underneath you. If it was already thinking when you branched, its answer is
+for a position that no longer exists and is thrown away rather than played.
 
 ## Lighting
 

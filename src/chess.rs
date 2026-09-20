@@ -185,13 +185,27 @@ impl Game {
         losses
     }
 
-    pub fn legal_moves(&self) -> Vec<Move> {
-        self.position.legal_moves().into_iter().collect()
+    /// Abandons everything after `ply` and continues from there.
+    ///
+    /// Playing a move while looking at an earlier position starts a new line
+    /// from that point, the way taking a move back and trying something else
+    /// does over a real board. What came after is gone.
+    pub fn branch_at(&mut self, ply: usize) {
+        if ply >= self.history.len() {
+            return;
+        }
+        self.position = self.position_at(ply);
+        self.history.truncate(ply);
+        self.refresh_end_state();
     }
 
-    /// Every legal move that starts on `from`.
-    pub fn legal_moves_from(&self, from: Square) -> Vec<Move> {
-        self.legal_moves()
+    /// Every legal move that starts on `from`, in the given position.
+    ///
+    /// Free-standing so it can be asked of a position being reviewed as well
+    /// as the live one.
+    pub fn legal_moves_from_position(position: &Chess, from: Square) -> Vec<Move> {
+        position
+            .legal_moves()
             .into_iter()
             .filter(|m| m.from() == Some(from))
             .collect()
@@ -241,7 +255,7 @@ mod tests {
     #[test]
     fn starting_position_has_twenty_legal_moves() {
         let game = Game::default();
-        assert_eq!(game.legal_moves().len(), 20);
+        assert_eq!(game.position.legal_moves().len(), 20);
         assert_eq!(game.turn(), Color::White);
         assert!(game.ended.is_none());
     }
@@ -288,7 +302,7 @@ mod tests {
     fn legal_moves_from_a_square_all_start_there() {
         let game = Game::default();
         let from = "e2".parse::<Square>().unwrap();
-        let moves = game.legal_moves_from(from);
+        let moves = Game::legal_moves_from_position(&game.position, from);
         assert_eq!(moves.len(), 2); // e3 and e4
         assert!(moves.iter().all(|m| m.from() == Some(from)));
     }
@@ -514,5 +528,111 @@ mod material_tests {
         assert_eq!(game.material_balance_at(3), 1, "a pawn up after it");
         assert!(game.losses_at(2).black.is_empty());
         assert_eq!(game.losses_at(3).black, vec![Role::Pawn]);
+    }
+}
+
+#[cfg(test)]
+mod branching_tests {
+    use super::*;
+
+    fn played(ucis: &[&str]) -> Game {
+        let mut game = Game::default();
+        for uci in ucis {
+            let mv = game
+                .parse_uci(uci)
+                .unwrap_or_else(|| panic!("{uci} illegal"));
+            game.play(&mv);
+        }
+        game
+    }
+
+    #[test]
+    fn playing_from_an_earlier_position_replaces_what_came_after() {
+        let mut game = played(&["e2e4", "e7e5", "g1f3", "b8c6"]);
+        assert_eq!(game.history.len(), 4);
+
+        // Step back to just after 1.e4 and try something else for Black.
+        game.branch_at(2);
+        assert_eq!(game.history.len(), 2, "the later moves should be gone");
+        assert_eq!(
+            game.turn(),
+            Color::White,
+            "it is White's move after two plies"
+        );
+
+        // Wait — after 2 plies (e4, e5) it is White to move. Branch at 1 for Black.
+        let mut game = played(&["e2e4", "e7e5", "g1f3", "b8c6"]);
+        game.branch_at(1);
+        assert_eq!(game.turn(), Color::Black);
+        let c5 = game
+            .parse_uci("c7c5")
+            .expect("the Sicilian is legal after 1.e4");
+        game.play(&c5);
+        assert_eq!(game.history.len(), 2);
+        assert_eq!(game.move_to_uci(&game.history[1]), "c7c5");
+    }
+
+    #[test]
+    fn the_board_matches_the_point_we_branched_from() {
+        let mut game = played(&["e2e4", "e7e5", "g1f3"]);
+        let before = game.position_at(1);
+        game.branch_at(1);
+        assert_eq!(
+            game.fen(),
+            Fen::from_position(&before, EnPassantMode::Legal).to_string()
+        );
+    }
+
+    #[test]
+    fn branching_at_the_live_position_changes_nothing() {
+        let mut game = played(&["e2e4", "e7e5"]);
+        let before = game.fen();
+        game.branch_at(game.history.len());
+        assert_eq!(game.fen(), before);
+        assert_eq!(game.history.len(), 2);
+    }
+
+    #[test]
+    fn branching_back_to_the_start_empties_the_history() {
+        let mut game = played(&["e2e4", "e7e5", "g1f3"]);
+        game.branch_at(0);
+        assert!(game.history.is_empty());
+        assert_eq!(game.turn(), Color::White);
+        assert_eq!(game.position.board().occupied().count(), 32);
+    }
+
+    #[test]
+    fn a_finished_game_can_be_rewound_and_continued() {
+        // Scholar's mate, then take the last move back and play on.
+        let mut game = played(&["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"]);
+        assert!(game.ended.is_some(), "that is mate");
+
+        game.branch_at(6);
+        assert!(game.ended.is_none(), "rewinding should un-finish the game");
+        let other = game.parse_uci("h5f3").expect("the queen has other squares");
+        game.play(&other);
+        assert!(game.ended.is_none());
+        assert_eq!(game.history.len(), 7);
+    }
+
+    #[test]
+    fn the_captured_pieces_follow_the_new_line() {
+        // Take a pawn, rewind past it, and it should be back on the board.
+        let mut game = played(&["e2e4", "d7d5", "e4d5"]);
+        assert_eq!(game.losses_at(game.history.len()).black.len(), 1);
+
+        game.branch_at(2);
+        assert!(
+            game.losses_at(game.history.len()).black.is_empty(),
+            "the captured pawn should be restored"
+        );
+        assert_eq!(game.material_balance_at(game.history.len()), 0);
+    }
+
+    #[test]
+    fn branching_past_the_end_is_ignored() {
+        let mut game = played(&["e2e4"]);
+        game.branch_at(99);
+        assert_eq!(game.history.len(), 1, "a nonsense ply must not truncate");
     }
 }

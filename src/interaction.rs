@@ -50,7 +50,7 @@ pub enum ClickOutcome {
 }
 
 pub fn resolve_click(
-    game: &Game,
+    position: &shakmaty::Chess,
     selection: &Selection,
     human: shakmaty::Color,
     square: Square,
@@ -86,15 +86,14 @@ pub fn resolve_click(
     }
 
     // Otherwise select, if it is one of our own pieces with somewhere to go.
-    let is_own = game
-        .position
+    let is_own = position
         .board()
         .piece_at(square)
         .map(|p| p.color == human)
         .unwrap_or(false);
 
     if is_own {
-        let moves = game.legal_moves_from(square);
+        let moves = Game::legal_moves_from_position(position, square);
         if !moves.is_empty() {
             return ClickOutcome::Select { square, moves };
         }
@@ -109,7 +108,7 @@ pub fn on_click(
     click: On<Pointer<Click>>,
     mut dragging: ResMut<Dragging>,
     human: Res<HumanSide>,
-    review: Res<Review>,
+    mut review: ResMut<Review>,
     mut game: ResMut<Game>,
     mut selection: ResMut<Selection>,
     mut last_move: ResMut<LastMoveText>,
@@ -130,11 +129,18 @@ pub fn on_click(
     if dragging.active() {
         return;
     }
-    if game.ended.is_some() || engine.thinking || game.turn() != human.0 {
-        return;
-    }
     // A promotion is waiting to be answered; nothing else may be played.
     if promotion.is_open() {
+        return;
+    }
+    // Everything is judged against the position on screen, which may be an
+    // earlier one: playing from there starts a new line.
+    let shown_ply = review.shown_ply(&game);
+    let position = game.position_at(shown_ply);
+    if position.is_checkmate() || position.is_stalemate() {
+        return;
+    }
+    if engine.thinking || position.turn() != human.0 {
         return;
     }
     // You are looking at an earlier position; the board on screen is not live.
@@ -156,8 +162,11 @@ pub fn on_click(
         return;
     };
 
-    match resolve_click(&game, &selection, human.0, square) {
+    match resolve_click(&position, &selection, human.0, square) {
         ClickOutcome::Play(mv) => {
+            // Moving from an earlier position abandons what came after it.
+            game.branch_at(shown_ply);
+            review.go_live();
             last_move.0 = format!("You played {}", game.move_to_uci(&mv));
             game.play(&mv);
             selection.clear();
@@ -190,16 +199,12 @@ pub fn update_highlights(
         commands.entity(entity).despawn();
     }
 
-    // Nothing is selectable in a past position, so draw no highlights there.
-    if review.is_reviewing() {
-        return;
-    }
-
     let lift = Vec3::Y * 0.05;
 
-    // Flag the king when it is in check.
-    if game.is_in_check() {
-        let king = game.position.board().king_of(game.turn());
+    // Flag the king when it is in check, in the position being shown.
+    let shown = game.position_at(review.shown_ply(&game));
+    if shown.is_check() {
+        let king = shown.board().king_of(shown.turn());
         if let Some(sq) = king {
             commands.spawn((
                 Mesh3d(assets.tile_mesh.clone()),
@@ -250,10 +255,15 @@ pub fn update_highlights(
 pub fn engine_turn(
     mut engine: ResMut<Engine>,
     game: Res<Game>,
+    review: Res<Review>,
     human: Res<HumanSide>,
     rating: Res<Rating>,
 ) {
     if game.ended.is_some() || engine.thinking || !engine.available {
+        return;
+    }
+    // Do not let the game move on underneath someone reading it back.
+    if review.is_reviewing() {
         return;
     }
     if game.turn() == human.0 {
@@ -276,6 +286,13 @@ pub fn engine_reply(
     };
     match reply {
         Reply::BestMove { uci, .. } => {
+            // The answer is for whatever position we asked about. If the
+            // player has since taken a move back and played something else,
+            // that position is gone and the move must not be applied.
+            let asked = engine.searched.take();
+            if asked.as_deref() != Some(game.fen().as_str()) {
+                return;
+            }
             let Some(mv) = game.parse_uci(&uci) else {
                 warn!("engine returned a move we could not parse: {uci}");
                 return;
@@ -304,14 +321,19 @@ mod tests {
     fn select(game: &Game, from: &str) -> Selection {
         Selection {
             square: Some(sq(from)),
-            moves: game.legal_moves_from(sq(from)),
+            moves: Game::legal_moves_from_position(&game.position, sq(from)),
         }
     }
 
     #[test]
     fn clicking_an_own_piece_selects_it() {
         let game = Game::default();
-        let outcome = resolve_click(&game, &Selection::default(), Color::White, sq("e2"));
+        let outcome = resolve_click(
+            &game.position,
+            &Selection::default(),
+            Color::White,
+            sq("e2"),
+        );
         match outcome {
             ClickOutcome::Select { square, moves } => {
                 assert_eq!(square, sq("e2"));
@@ -324,14 +346,24 @@ mod tests {
     #[test]
     fn clicking_an_opponent_piece_clears_instead_of_selecting() {
         let game = Game::default();
-        let outcome = resolve_click(&game, &Selection::default(), Color::White, sq("e7"));
+        let outcome = resolve_click(
+            &game.position,
+            &Selection::default(),
+            Color::White,
+            sq("e7"),
+        );
         assert_eq!(outcome, ClickOutcome::Clear);
     }
 
     #[test]
     fn clicking_an_empty_square_with_nothing_held_clears() {
         let game = Game::default();
-        let outcome = resolve_click(&game, &Selection::default(), Color::White, sq("e4"));
+        let outcome = resolve_click(
+            &game.position,
+            &Selection::default(),
+            Color::White,
+            sq("e4"),
+        );
         assert_eq!(outcome, ClickOutcome::Clear);
     }
 
@@ -339,7 +371,12 @@ mod tests {
     fn a_blocked_piece_cannot_be_selected() {
         // The a1 rook has no legal move from the starting position.
         let game = Game::default();
-        let outcome = resolve_click(&game, &Selection::default(), Color::White, sq("a1"));
+        let outcome = resolve_click(
+            &game.position,
+            &Selection::default(),
+            Color::White,
+            sq("a1"),
+        );
         assert_eq!(outcome, ClickOutcome::Clear);
     }
 
@@ -347,7 +384,7 @@ mod tests {
     fn clicking_a_legal_destination_plays_the_move() {
         let game = Game::default();
         let selection = select(&game, "e2");
-        match resolve_click(&game, &selection, Color::White, sq("e4")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("e4")) {
             ClickOutcome::Play(mv) => assert_eq!(game.move_to_uci(&mv), "e2e4"),
             other => panic!("expected a move, got {other:?}"),
         }
@@ -358,7 +395,7 @@ mod tests {
         let game = Game::default();
         let selection = select(&game, "e2");
         // e5 is two ranks too far for a pawn on its opening move... plus one.
-        let outcome = resolve_click(&game, &selection, Color::White, sq("e5"));
+        let outcome = resolve_click(&game.position, &selection, Color::White, sq("e5"));
         assert_eq!(outcome, ClickOutcome::Clear);
     }
 
@@ -366,7 +403,7 @@ mod tests {
     fn clicking_another_own_piece_reselects_rather_than_clearing() {
         let game = Game::default();
         let selection = select(&game, "e2");
-        match resolve_click(&game, &selection, Color::White, sq("d2")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("d2")) {
             ClickOutcome::Select { square, .. } => assert_eq!(square, sq("d2")),
             other => panic!("expected reselection, got {other:?}"),
         }
@@ -384,7 +421,7 @@ mod tests {
             .unwrap();
 
         let selection = select(&game, "b7");
-        match resolve_click(&game, &selection, Color::White, sq("b8")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("b8")) {
             ClickOutcome::Promote { to, options } => {
                 assert_eq!(to, sq("b8"));
                 assert_eq!(options.len(), 4, "all four pieces should be offered");
@@ -407,7 +444,7 @@ mod tests {
             .unwrap();
         let selection = select(&game, "b7");
         let ClickOutcome::Promote { options, .. } =
-            resolve_click(&game, &selection, Color::White, sq("b8"))
+            resolve_click(&game.position, &selection, Color::White, sq("b8"))
         else {
             panic!("expected a promotion");
         };
@@ -439,7 +476,7 @@ mod tests {
             .unwrap();
         let selection = select(&game, "b7");
         let ClickOutcome::Promote { options, .. } =
-            resolve_click(&game, &selection, Color::White, sq("b8"))
+            resolve_click(&game.position, &selection, Color::White, sq("b8"))
         else {
             panic!("expected a promotion");
         };
@@ -458,7 +495,7 @@ mod tests {
             .into_position(shakmaty::CastlingMode::Standard)
             .unwrap();
         let selection = select(&game, "b7");
-        match resolve_click(&game, &selection, Color::White, sq("a8")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("a8")) {
             ClickOutcome::Promote { options, .. } => {
                 assert_eq!(options.len(), 4);
                 assert!(options.iter().all(|m| m.is_capture()));
@@ -471,7 +508,7 @@ mod tests {
     fn an_ordinary_move_is_played_without_asking() {
         let game = Game::default();
         let selection = select(&game, "e2");
-        match resolve_click(&game, &selection, Color::White, sq("e4")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("e4")) {
             ClickOutcome::Play(mv) => assert_eq!(game.move_to_uci(&mv), "e2e4"),
             other => panic!("expected a plain move, got {other:?}"),
         }
@@ -485,7 +522,7 @@ mod tests {
             game.play(&mv);
         }
         let selection = select(&game, "e4");
-        match resolve_click(&game, &selection, Color::White, sq("d5")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("d5")) {
             ClickOutcome::Play(mv) => {
                 assert!(mv.is_capture());
                 assert_eq!(game.move_to_uci(&mv), "e4d5");
@@ -620,10 +657,12 @@ pub fn on_drag_start(
     if drag.event.button != PointerButton::Primary {
         return;
     }
-    if game.ended.is_some()
+    let shown_ply = review.shown_ply(&game);
+    let position = game.position_at(shown_ply);
+    if position.is_checkmate()
+        || position.is_stalemate()
         || engine.thinking
-        || game.turn() != human.0
-        || review.is_reviewing()
+        || position.turn() != human.0
         || promotion.is_open()
     {
         return;
@@ -637,9 +676,8 @@ pub fn on_drag_start(
         return;
     };
 
-    let moves = game.legal_moves_from(piece.square);
-    let is_own = game
-        .position
+    let moves = Game::legal_moves_from_position(&position, piece.square);
+    let is_own = position
         .board()
         .piece_at(piece.square)
         .map(|p| p.color == human.0)
@@ -708,6 +746,7 @@ pub fn on_drag_end(
     mut last_move: ResMut<LastMoveText>,
     mut dropped: ResMut<DroppedFrom>,
     mut promotion: ResMut<PendingPromotion>,
+    mut review: ResMut<Review>,
     human: Res<HumanSide>,
 ) {
     if !dragging.active() {
@@ -718,8 +757,10 @@ pub fn on_drag_end(
     dragging.clear();
     dragging.just_dropped = true;
 
+    let shown_ply = review.shown_ply(&game);
+    let position = game.position_at(shown_ply);
     let outcome = match target {
-        Some(square) => resolve_click(&game, &selection, human.0, square),
+        Some(square) => resolve_click(&position, &selection, human.0, square),
         None => ClickOutcome::Clear,
     };
 
@@ -730,6 +771,9 @@ pub fn on_drag_end(
             if let Some(from) = held_at {
                 dropped.0 = Some((mv.to(), from));
             }
+            // Moving from an earlier position abandons what came after it.
+            game.branch_at(shown_ply);
+            review.go_live();
             last_move.0 = format!("You played {}", game.move_to_uci(&mv));
             game.play(&mv);
             selection.clear();
@@ -861,9 +905,9 @@ mod drag_release_tests {
         let game = Game::default();
         let selection = Selection {
             square: Some(sq("e2")),
-            moves: game.legal_moves_from(sq("e2")),
+            moves: Game::legal_moves_from_position(&game.position, sq("e2")),
         };
-        match resolve_click(&game, &selection, Color::White, sq("e2")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("e2")) {
             ClickOutcome::Select { square, .. } => assert_eq!(square, sq("e2")),
             other => panic!("expected the piece to stay selected, got {other:?}"),
         }
@@ -874,9 +918,9 @@ mod drag_release_tests {
         let game = Game::default();
         let selection = Selection {
             square: Some(sq("e2")),
-            moves: game.legal_moves_from(sq("e2")),
+            moves: Game::legal_moves_from_position(&game.position, sq("e2")),
         };
-        match resolve_click(&game, &selection, Color::White, sq("e4")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("e4")) {
             ClickOutcome::Play(mv) => assert_eq!(game.move_to_uci(&mv), "e2e4"),
             other => panic!("expected a move, got {other:?}"),
         }
@@ -887,10 +931,10 @@ mod drag_release_tests {
         let game = Game::default();
         let selection = Selection {
             square: Some(sq("e2")),
-            moves: game.legal_moves_from(sq("e2")),
+            moves: Game::legal_moves_from_position(&game.position, sq("e2")),
         };
         assert_eq!(
-            resolve_click(&game, &selection, Color::White, sq("e5")),
+            resolve_click(&game.position, &selection, Color::White, sq("e5")),
             ClickOutcome::Clear
         );
     }
@@ -918,7 +962,7 @@ mod castling_tests {
     fn king_selected(game: &Game) -> Selection {
         Selection {
             square: Some(sq("e1")),
-            moves: game.legal_moves_from(sq("e1")),
+            moves: Game::legal_moves_from_position(&game.position, sq("e1")),
         }
     }
 
@@ -928,7 +972,7 @@ mod castling_tests {
         // notation obscures.
         let game = ready_to_castle();
         let selection = king_selected(&game);
-        match resolve_click(&game, &selection, Color::White, sq("g1")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("g1")) {
             ClickOutcome::Play(mv) => {
                 assert!(mv.is_castle(), "g1 should castle, got {mv:?}");
                 assert_eq!(
@@ -945,7 +989,7 @@ mod castling_tests {
     fn clicking_the_rook_still_castles() {
         let game = ready_to_castle();
         let selection = king_selected(&game);
-        match resolve_click(&game, &selection, Color::White, sq("h1")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("h1")) {
             ClickOutcome::Play(mv) => assert!(mv.is_castle()),
             other => panic!("expected a castle, got {other:?}"),
         }
@@ -954,8 +998,7 @@ mod castling_tests {
     #[test]
     fn the_highlight_sits_on_the_kings_square_not_the_rooks() {
         let game = ready_to_castle();
-        let castle = game
-            .legal_moves_from(sq("e1"))
+        let castle = Game::legal_moves_from_position(&game.position, sq("e1"))
             .into_iter()
             .find(|m| m.is_castle())
             .expect("short castle should be legal");
@@ -978,7 +1021,7 @@ mod castling_tests {
             game.play(&mv);
         }
         let selection = king_selected(&game);
-        match resolve_click(&game, &selection, Color::White, sq("c1")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("c1")) {
             ClickOutcome::Play(mv) => {
                 assert!(mv.is_castle());
                 assert_eq!(game.move_to_uci(&mv), "e1c1");
@@ -996,9 +1039,9 @@ mod castling_tests {
         }
         let selection = Selection {
             square: Some(sq("e8")),
-            moves: game.legal_moves_from(sq("e8")),
+            moves: Game::legal_moves_from_position(&game.position, sq("e8")),
         };
-        match resolve_click(&game, &selection, Color::Black, sq("g8")) {
+        match resolve_click(&game.position, &selection, Color::Black, sq("g8")) {
             ClickOutcome::Play(mv) => {
                 assert!(mv.is_castle());
                 assert_eq!(game.move_to_uci(&mv), "e8g8");
@@ -1011,7 +1054,7 @@ mod castling_tests {
     fn an_ordinary_king_move_is_unaffected() {
         let game = ready_to_castle();
         let selection = king_selected(&game);
-        match resolve_click(&game, &selection, Color::White, sq("e2")) {
+        match resolve_click(&game.position, &selection, Color::White, sq("e2")) {
             ClickOutcome::Play(mv) => {
                 assert!(!mv.is_castle());
                 assert_eq!(game.move_to_uci(&mv), "e1e2");
@@ -1062,7 +1105,12 @@ mod playing_black_tests {
         let game = Game::default();
         // e2 is a White pawn; playing Black it must not be selectable.
         assert_eq!(
-            resolve_click(&game, &Selection::default(), Color::Black, sq("e2")),
+            resolve_click(
+                &game.position,
+                &Selection::default(),
+                Color::Black,
+                sq("e2")
+            ),
             ClickOutcome::Clear
         );
     }
@@ -1072,7 +1120,12 @@ mod playing_black_tests {
         let mut game = Game::default();
         let e4 = game.parse_uci("e2e4").unwrap();
         game.play(&e4);
-        match resolve_click(&game, &Selection::default(), Color::Black, sq("e7")) {
+        match resolve_click(
+            &game.position,
+            &Selection::default(),
+            Color::Black,
+            sq("e7"),
+        ) {
             ClickOutcome::Select { square, moves } => {
                 assert_eq!(square, sq("e7"));
                 assert_eq!(moves.len(), 2);
@@ -1087,9 +1140,9 @@ mod playing_black_tests {
         game.play(&game.parse_uci("e2e4").unwrap().clone());
         let selection = Selection {
             square: Some(sq("e7")),
-            moves: game.legal_moves_from(sq("e7")),
+            moves: Game::legal_moves_from_position(&game.position, sq("e7")),
         };
-        match resolve_click(&game, &selection, Color::Black, sq("e5")) {
+        match resolve_click(&game.position, &selection, Color::Black, sq("e5")) {
             ClickOutcome::Play(mv) => assert_eq!(game.move_to_uci(&mv), "e7e5"),
             other => panic!("expected a move, got {other:?}"),
         }

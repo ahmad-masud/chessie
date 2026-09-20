@@ -556,7 +556,7 @@ pub fn update_hud(
             "Engine unavailable".to_string()
         } else if let Some(ply) = review.ply {
             format!(
-                "Reviewing move {} of {}",
+                "Move {} of {} — play here to branch",
                 ply.div_ceil(2).max(1),
                 game.history.len().div_ceil(2).max(1)
             )
@@ -631,7 +631,8 @@ pub fn update_hud(
         } else if help.0 {
             String::new()
         } else if review.is_reviewing() {
-            "Down to return to live   ·   H for controls".to_string()
+            "Play a move here to start a new line   ·   Down to return to live   ·   H for controls"
+                .to_string()
         } else {
             let _ = &evaluation;
             "H for controls".to_string()

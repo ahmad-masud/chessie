@@ -103,7 +103,10 @@ mod tests {
         // The whole point is that the app does not need anything installed.
         let candidates = engine_candidates(Path::new("/tmp/nowhere/chessie"));
         let plain = candidates.iter().position(|c| c == "stockfish");
-        assert!(plain.is_some(), "the system engine should still be a fallback");
+        assert!(
+            plain.is_some(),
+            "the system engine should still be a fallback"
+        );
     }
 
     #[test]

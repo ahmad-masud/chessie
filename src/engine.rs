@@ -67,6 +67,11 @@ pub struct Engine {
     pub thinking: bool,
     pub available: bool,
     pub last_error: Option<String>,
+    /// The position the current search was asked about. If the game has moved
+    /// on by the time the answer arrives — because the player took a move
+    /// back and played something else — the answer is for a game that no
+    /// longer exists and has to be thrown away.
+    pub searched: Option<String>,
 }
 
 impl Engine {
@@ -82,6 +87,7 @@ impl Engine {
                     tx: req_tx,
                     rx: Mutex::new(rep_rx),
                     thinking: false,
+                    searched: None,
                     available: true,
                     last_error: None,
                 }
@@ -92,6 +98,7 @@ impl Engine {
                     tx: req_tx,
                     rx: Mutex::new(rep_rx),
                     thinking: false,
+                    searched: None,
                     available: false,
                     last_error: Some(e),
                 }
@@ -114,6 +121,7 @@ impl Engine {
             return;
         }
         self.thinking = true;
+        self.searched = Some(fen.clone());
         let _ = self.tx.send(Request::Search { fen, movetime_ms });
     }
 
@@ -289,6 +297,7 @@ fn read_bestmove(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shakmaty::Position;
     use std::time::{Duration, Instant};
 
     /// Drives the engine synchronously, the way the Bevy systems do frame to frame.
@@ -367,6 +376,7 @@ mod tests {
             }
             // Stand in for the human with any legal reply.
             let reply = game
+                .position
                 .legal_moves()
                 .into_iter()
                 .next()
@@ -383,5 +393,38 @@ mod tests {
         assert_eq!(ENGINE_MIN_ELO, 1320);
         assert_eq!(ENGINE_MAX_ELO, 3190);
         assert!(UI_MIN_ELO < ENGINE_MIN_ELO);
+    }
+}
+
+#[cfg(test)]
+mod staleness_tests {
+    use super::*;
+
+    #[test]
+    fn a_search_records_the_position_it_was_asked_about() {
+        // Without this the engine's answer could be applied to a game that no
+        // longer exists, after the player took a move back and played on.
+        let mut engine = Engine::launch(true);
+        if !engine.available {
+            eprintln!("skipping: Stockfish not installed");
+            return;
+        }
+        assert!(engine.searched.is_none());
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string();
+        engine.search(fen.clone(), 50);
+        assert_eq!(engine.searched.as_deref(), Some(fen.as_str()));
+    }
+
+    #[test]
+    fn an_answer_for_another_position_is_recognisable() {
+        // The guard in `engine_reply` is this comparison.
+        let asked = Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string());
+        let now_playing = "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 2";
+        assert_ne!(
+            asked.as_deref(),
+            Some(now_playing),
+            "a branched game must not match"
+        );
+        assert_eq!(asked.as_deref(), Some(asked.clone().unwrap().as_str()));
     }
 }

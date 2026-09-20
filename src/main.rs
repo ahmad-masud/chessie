@@ -30,7 +30,10 @@ fn main() {
     // whichever of those actually holds the files, so the app works the same
     // from a bundle, a folder, or `cargo run`.
     if std::env::var_os("BEVY_ASSET_ROOT").is_none() {
-        if let Some(root) = std::env::current_exe().ok().and_then(|exe| paths::asset_root(&exe)) {
+        if let Some(root) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| paths::asset_root(&exe))
+        {
             std::env::set_var("BEVY_ASSET_ROOT", root);
         }
     }
