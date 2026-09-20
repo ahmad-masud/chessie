@@ -6,6 +6,7 @@
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 
 use crate::board::{BOARD_CENTER, BOARD_SURFACE_Y};
 use crate::interaction::PendingPromotion;
@@ -174,14 +175,27 @@ pub fn spawn_camera(mut commands: Commands, camera: Res<BoardCamera>) {
             ..default()
         }),
         camera.transform(),
-        DistanceFog {
-            // Matches the horizon, so the ground fades into the sky.
-            color: Color::srgb(0.70, 0.82, 0.94),
-            falloff: FogFalloff::Linear {
-                start: 45.0,
-                end: 120.0,
+        // The default tonemapper is deliberately neutral, which on a scene
+        // this clean reads as washed out. A little saturation and contrast
+        // after it puts the colour back without touching the materials.
+        ColorGrading {
+            global: ColorGradingGlobal {
+                post_saturation: 1.30,
+                ..default()
             },
-            ..default()
+            midtones: ColorGradingSection {
+                contrast: 1.10,
+                saturation: 1.10,
+                ..default()
+            },
+            shadows: ColorGradingSection {
+                saturation: 1.05,
+                ..default()
+            },
+            highlights: ColorGradingSection {
+                saturation: 1.05,
+                ..default()
+            },
         },
         BoardView,
     ));

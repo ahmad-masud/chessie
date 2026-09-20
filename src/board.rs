@@ -1151,20 +1151,6 @@ mod tray_tests {
             }
         }
     }
-
-    #[test]
-    fn piles_stay_inside_the_courtyard() {
-        for owner in [ChessColor::White, ChessColor::Black] {
-            for index in 0..15 {
-                let p = tray_position(owner, index);
-                assert!(
-                    p.x.abs() < crate::world::COURTYARD_HALF
-                        && p.z.abs() < crate::world::COURTYARD_HALF,
-                    "{owner:?} piece {index} is outside the walls at {p:?}"
-                );
-            }
-        }
-    }
 }
 
 #[cfg(test)]

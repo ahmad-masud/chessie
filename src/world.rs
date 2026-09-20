@@ -14,15 +14,12 @@ use crate::board::spawn_board;
 /// are set against Bevy's reference scale, where `OVERCAST_DAY` is 1 000 lux
 /// and `FULL_DAYLIGHT` is 20 000.
 /// Sky colours, horizon first.
-const SKY_HORIZON: Vec3 = Vec3::new(0.70, 0.82, 0.94);
-const SKY_LOW: Vec3 = Vec3::new(0.50, 0.71, 0.93);
-const SKY_MID: Vec3 = Vec3::new(0.30, 0.56, 0.88);
-const SKY_ZENITH: Vec3 = Vec3::new(0.16, 0.40, 0.80);
+const SKY_HORIZON: Vec3 = Vec3::new(0.66, 0.85, 1.00);
+const SKY_LOW: Vec3 = Vec3::new(0.40, 0.72, 0.99);
+const SKY_MID: Vec3 = Vec3::new(0.17, 0.53, 0.94);
+const SKY_ZENITH: Vec3 = Vec3::new(0.05, 0.33, 0.85);
 /// How far away the sky sits.
 const SKY_RADIUS: f32 = 200.0;
-
-/// Half-width of the ground the board stands on.
-pub const COURTYARD_HALF: f32 = 60.0;
 
 /// Colour of the sky at a given height, 0 at the horizon and 1 overhead.
 fn sky_gradient(t: f32) -> Vec3 {
@@ -94,25 +91,6 @@ pub fn setup_world(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // --- Ground -----------------------------------------------------------
-    // Something for the board to stand on and cast its shadow across. Kept
-    // plain so it reads as ground rather than as another object.
-    commands.spawn((
-        Mesh3d(
-            meshes.add(
-                Plane3d::default()
-                    .mesh()
-                    .size(COURTYARD_HALF * 2.0, COURTYARD_HALF * 2.0),
-            ),
-        ),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.42, 0.47, 0.42),
-            perceptual_roughness: 0.95,
-            ..default()
-        })),
-        Transform::default(),
-    ));
-
     // --- The board --------------------------------------------------------
     spawn_board(&mut commands, &mut meshes, &mut materials);
 
@@ -124,6 +102,10 @@ pub fn setup_world(
             unlit: true,
             // Seen from the inside, so do not cull the faces away.
             cull_mode: None,
+            // Unlit skips the lighting, not the fog. The dome sits further
+            // away than any sensible fog distance, so leaving this on paints
+            // the whole sky a flat fog colour and the gradient is lost.
+            fog_enabled: false,
             ..default()
         })),
         Transform::default(),
@@ -140,8 +122,8 @@ pub fn setup_world(
     // --- Light ------------------------------------------------------------
     // On a clear day the sky is a large, soft, blue source in its own right.
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.58, 0.71, 0.94),
-        brightness: 160.0,
+        color: Color::srgb(0.52, 0.68, 0.96),
+        brightness: 130.0,
         ..default()
     });
 
@@ -149,8 +131,8 @@ pub fn setup_world(
     // rather than long bars across the squares.
     commands.spawn((
         DirectionalLight {
-            color: Color::srgb(1.0, 0.97, 0.92),
-            illuminance: 11_000.0,
+            color: Color::srgb(1.0, 0.96, 0.89),
+            illuminance: 13_000.0,
             shadow_maps_enabled: true,
             shadow_depth_bias: 0.03,
             ..default()
