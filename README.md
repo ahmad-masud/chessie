@@ -28,6 +28,24 @@ Two caveats for handing it to anyone else:
 - It bundles Stockfish, which is GPL-3. That carries obligations — see
   `CREDITS.md` before publishing it anywhere.
 
+## Disk space
+
+A Bevy build tree is large. The dev profile builds dependencies without debug
+info — Bevy is some three hundred crates and you never step into any of them —
+which is the difference between a 13 GB and a 1.7 GB `target/`. Our own code
+keeps line numbers, so panics and test failures still point somewhere useful.
+
+```
+target/debug     1.7 GB
+target/release   1.7 GB
+dist/            160 MB   only after ./scripts/bundle-macos.sh
+```
+
+None of it is in the repository; the tracked files come to about 14 MB, nearly
+all of it the piece model. If the tree grows again — changing a cargo feature
+invalidates every crate and leaves the old copies behind — `cargo clean`
+reclaims all of it at the cost of a rebuild.
+
 ## Requirements
 
 - Rust (stable)

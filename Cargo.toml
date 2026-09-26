@@ -17,6 +17,13 @@ strip = "symbols"
 
 [profile.dev]
 opt-level = 1
+# Line numbers in panics and test failures, without the full DWARF tables.
+# The complete debug info for this dependency tree runs to gigabytes.
+debug = "line-tables-only"
 
+# Dependencies are built optimised, and without debug info: Bevy is some three
+# hundred crates and we never step into any of them. Keeping their symbols was
+# most of a 13 GB target directory.
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
